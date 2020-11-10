@@ -115,7 +115,7 @@ class Grid:
 		entry_point_relative_to_instance=os.path.join("../../../",self.entry)
 
 		def write_shell_instance_content__(fhandle,command,command_hex):
-			fhandle.write ("#!/bin/sh\n")
+			fhandle.write ("#!/bin/bash\n")
 			fhandle.write ("run_grid_instance (){\n")
 			fhandle.write ("echo \"STARTED\" > shell_instance_started_signal\n")
 			fhandle.write("\t"+command+" \n ")
@@ -181,8 +181,8 @@ class Grid:
 	def resume_as_before(self,hard_resume=False):
 		self.create_runner(**{**self.last_run_params,"hard_resume":hard_resume})
 
-	def resume(self,fraction=1.0,num_runners=1,runners_prefix=["sh"],parallel=1,hard_resume=False):
-		self.create_runner(fraction=fraction,num_runners=num_runners,runners_prefix=runners_prefix,parallel=parallel,hard_resume=hard_resume)
+	def resume(self,fraction=1.0,num_runners=1,runners_prefix=["sh"],parallel=1,overload=1,hard_resume=False):
+		self.create_runner(fraction=fraction,num_runners=num_runners,runners_prefix=runners_prefix,parallel=parallel,overload=overload,hard_resume=hard_resume)
 
 	def __nullify_previous_instance_runs(self,nullification_list,strict=True):
 		for command_hex in nullification_list:
@@ -203,7 +203,7 @@ class Grid:
 				else:
 					pass
 
-	def create_runner(self,fraction=1.0,num_runners=1,runners_prefix=["sh"],parallel=1,hard_resume=False):
+	def create_runner(self,fraction=1.0,num_runners=1,runners_prefix=["sh"],parallel=1,hard_resume=False,overload=1):
 
 		if parallel>3:
 			log.error("Parallel cannot be higher than 3.",error=True)
@@ -220,7 +220,10 @@ class Grid:
 		if len(runners_prefix)!=num_runners:
 			log.error("Mismatch between num_runners and runners_prefix arguments. Exiting ...!",error=True)
 
-		last_run_params={"fraction":fraction,"num_runners":num_runners,"runners_prefix":runners_prefix,"parallel":parallel}
+		if overload==None:
+			overload=1
+
+		last_run_params={"fraction":fraction,"num_runners":num_runners,"runners_prefix":runners_prefix,"parallel":parallel,"overload":overload}
 		self.last_run_params=last_run_params
 
 		if hard_resume:
@@ -269,23 +272,38 @@ class Grid:
 
 		main_handle=open(os.path.join(attempt_dir,"main.sh"),"w")
 
-		def write_main_entries__(main_handle,entry):
+		def write_main_entries__(idx,main_handle,entry):
 			main_handle.write("cd ./groups/\n")
 			main_handle.write("%s\n"%entry)
+			main_handle.write("pids[%d]=$!\n"%idx)
 			main_handle.write("cd - > /dev/null\n")
 
-		split_len=math.ceil((len(self.grid)*fraction)/num_runners)
-		run_counter=0
+		split_len=math.ceil((len(command_hexes)*fraction)/num_runners)
 
 		for i in range(num_runners):
 			this_group="group_%d.sh"%i
 			this_hexes=command_hexes[i*split_len:(i+1)*split_len]
 			this_group_fname=os.path.join(group_dir,this_group)
 			group_handle=open(this_group_fname,"w")
-			for this_hex in this_hexes: 
-				group_handle.write("cd ../../../instances/%s/ && echo Running %s && %s %s.sh > %s.stdout && cd - > /dev/null\n"%(this_hex,this_hex,runners_prefix[i],this_hex,this_hex))
-			write_main_entries__(main_handle,"cat %s | xargs -L 1 -I CMD -P %d bash -c CMD &"%(this_group,parallel))
-		main_handle.write("wait")
+			if overload > 1:
+				overload_splits = math.ceil(len(this_hexes)/overload)
+				for j in range(overload_splits):
+					this_hexes_split = this_hexes[j*overload:(j+1)*overload]
+					overload_name="group_%d_overload_%d.sh"%(i,j)
+					overload_fname = os.path.join(group_dir,overload_name)
+					overload_handle=open(overload_fname,"w")
+					overload_handle.write("#!/bin/bash\n")
+					for k, this_hex in enumerate(this_hexes_split):
+						overload_handle.write("cd ../../../instances/%s/\necho Running %s\n(bash %s.sh >& %s.stdout) &\npids[%d]=$!\ncd - > /dev/null\n"%(this_hex,this_hex,this_hex,this_hex,k))
+					overload_handle.write("for pid in ${pids[*]}; do wait $pid; done\n")
+					overload_handle.close()
+					group_handle.write("%s %s\n"%(runners_prefix[i],overload_name))
+			else:
+				for this_hex in this_hexes:
+					group_handle.write("cd ../../../instances/%s/ && echo Running %s && %s %s.sh > %s.stdout && cd - > /dev/null\n"%(this_hex,this_hex,runners_prefix[i],this_hex,this_hex))
+			group_handle.close()
+			write_main_entries__(i, main_handle,"cat %s | xargs -L 1 -I CMD -P %d bash -c CMD &"%(this_group,parallel))
+		main_handle.write("for pid in ${pids[*]}; do wait $pid; done\n")
 		main_handle.close()
 
 		log.success("Grid runners established under %s"%os.path.join(self.grid_dir,"central",attempt))

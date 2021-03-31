@@ -203,7 +203,13 @@ class Grid:
 				else:
 					pass
 
+	def __write_description(self):
+		with open(os.path.join(self.grid_dir,"description.txt"),"w") as f:
+			f.write(self.description)
+
 	def create_runner(self,fraction=1.0,num_runners=1,runners_prefix=["sh"],parallel=1,hard_resume=False):
+
+		self.__write_description()
 
 		if parallel>3:
 			log.error("Parallel cannot be higher than 3.",error=True)
@@ -300,7 +306,7 @@ class Grid:
 			in_fpath=os.path.join(self.grid_dir,"instances/",command_hex+"/",input_file)
 			out_fpath=os.path.join(self.grid_dir,"instances/",command_hex+"/",output_file)
 			if not os.path.isfile(in_fpath):
-				log.warning("%s does not have the %s file."%(command_hex,input_file))
+				log.error("%s does not have the %s file."%(command_hex,input_file),error=False)
 				continue
 
 			try:
@@ -323,7 +329,7 @@ class Grid:
 		for command_hex in finished:
 			main_res_fpath=os.path.join(self.grid_dir,"instances/",command_hex+"/",main_res_file)
 			if not os.path.isfile(main_res_fpath):
-				log.warning("%s does not have the %s file."%(command_hex,main_res_file))
+				log.error("%s does not have the %s file."%(command_hex,main_res_file),error=False)
 				continue
 			main_res_content=open(main_res_fpath,"r").read()
 			main_res=json.loads(main_res_content)
